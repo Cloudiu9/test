@@ -1,26 +1,31 @@
-
-
 // ─── CONFIG ─────────────────────────────────────
-const API_BASES = ['http://127.0.0.1:8000', 'http://localhost:8000'];
+const API_BASES = ["http://127.0.0.1:8000", "http://localhost:8000"];
+
+// ─── GLOBALS ─────────────────────────────────────
+let allEntries = [];
+let lastGenerated = "";
+let revealedPw = "";
 
 const ROUTE_ALIASES = {
-  '/': ['/vault/status'],
-  '/entries/': ['/entries'],
-  '/entries': ['/entries/'],
-  '/ai/score': ['/ai/score-password'],
-  '/ai/score-password': ['/ai/score'],
-  '/export/': ['/export/quantum-safe'],
-  '/export/quantum-safe': ['/export/'],
-  '/vault/backup': [],
+  "/": ["/vault/status"],
+  "/ai/score": ["/ai/score-password"],
+  "/ai/score-password": ["/ai/score"],
+  "/export/": ["/export/quantum-safe"],
+  "/export/quantum-safe": ["/export/"],
+  "/vault/backup": [],
 };
 
 function normalizePath(path) {
-  return path.replace(/\/{2,}/g, '/');
+  return path.replace(/\/{2,}/g, "/");
 }
 
 async function requestViaPywebview(method, path, body = null) {
-  if (!window.pywebview || !window.pywebview.api || typeof window.pywebview.api.request !== 'function') {
-    throw new Error('pywebview bridge unavailable');
+  if (
+    !window.pywebview ||
+    !window.pywebview.api ||
+    typeof window.pywebview.api.request !== "function"
+  ) {
+    throw new Error("pywebview bridge unavailable");
   }
   return await window.pywebview.api.request(method, path, body);
 }
@@ -28,8 +33,8 @@ async function requestViaPywebview(method, path, body = null) {
 async function requestViaFetch(base, method, path, body = null) {
   const opts = {
     method,
-    headers: { 'Content-Type': 'application/json' },
-    mode: 'cors',
+    headers: { "Content-Type": "application/json" },
+    mode: "cors",
   };
   if (body !== null && body !== undefined) opts.body = JSON.stringify(body);
 
@@ -37,7 +42,11 @@ async function requestViaFetch(base, method, path, body = null) {
   const text = await res.text();
   let data = {};
   if (text) {
-    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
   }
 
   if (!res.ok) {
@@ -54,7 +63,11 @@ async function api(method, path, body = null) {
 
   for (const candidate of candidates) {
     try {
-      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.request === 'function') {
+      if (
+        window.pywebview &&
+        window.pywebview.api &&
+        typeof window.pywebview.api.request === "function"
+      ) {
         return await requestViaPywebview(method, candidate, body);
       }
 
@@ -70,124 +83,164 @@ async function api(method, path, body = null) {
     }
   }
 
-  throw lastErr || new Error('Request failed');
+  throw lastErr || new Error("Request failed");
 }
-
 
 // ─── VIEWS ──────────────────────────────────────
 function showView(id) {
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
+  document
+    .querySelectorAll(".view")
+    .forEach((v) => v.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
 }
 
 // ─── LOCK / UNLOCK ──────────────────────────────
 async function handleUnlock() {
-  const pw = document.getElementById('master-pw-input').value;
-  const errEl = document.getElementById('lock-error');
-  const btn = document.getElementById('btn-unlock');
-  errEl.textContent = '';
-  if (!pw) { errEl.textContent = '⚠ Please enter your master password.'; return; }
+  const pw = document.getElementById("master-pw-input").value;
+  const errEl = document.getElementById("lock-error");
+  const btn = document.getElementById("btn-unlock");
+  errEl.textContent = "";
+  if (!pw) {
+    errEl.textContent = "⚠ Please enter your master password.";
+    return;
+  }
 
   btn.disabled = true;
-  btn.textContent = 'Unlocking…';
+  btn.textContent = "Unlocking…";
   try {
-    await api('POST', '/vault/unlock', { master_password: pw });
-    document.getElementById('master-pw-input').value = '';
-    showView('view-app');
+    await api("POST", "/vault/unlock", { password: pw });
+    document.getElementById("master-pw-input").value = "";
+    showView("view-app");
     await loadEntries();
-    toast('Vault unlocked successfully', 'success');
+    toast("Vault unlocked successfully", "success");
   } catch (e) {
-    errEl.textContent = '⚠ ' + (e.message || 'Incorrect password or vault error.');
+    errEl.textContent =
+      "⚠ " + (e.message || "Incorrect password or vault error.");
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Unlock Vault';
+    btn.textContent = "Unlock Vault";
   }
 }
 
-document.getElementById('master-pw-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') handleUnlock();
+document.getElementById("master-pw-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") handleUnlock();
 });
 
 async function handleLock() {
   try {
-    await api('POST', '/vault/lock');
-  } catch (_) { /* ignore */ }
-  showView('view-lock');
+    await api("POST", "/vault/lock");
+  } catch (_) {
+    /* ignore */
+  }
+  showView("view-lock");
   allEntries = [];
-  document.getElementById('entry-list').innerHTML = '';
-  toast('Vault locked. Key wiped from memory.', 'info');
+  document.getElementById("entry-list").innerHTML = "";
+  toast("Vault locked. Key wiped from memory.", "info");
 }
 
 // ─── CREATE VAULT ────────────────────────────────
 function showCreateVaultModal() {
-  openModal('modal-create');
+  openModal("modal-create");
 }
 
 async function handleCreateVault() {
-  const pw = document.getElementById('create-pw').value;
-  const confirm = document.getElementById('create-pw-confirm').value;
-  if (!pw) { toast('Enter a master password', 'error'); return; }
-  if (pw !== confirm) { toast('Passwords do not match', 'error'); return; }
-  if (pw.length < 10) { toast('Master password must be at least 10 characters', 'error'); return; }
+  const pw = document.getElementById("create-pw").value;
+  const confirm = document.getElementById("create-pw-confirm").value;
+  if (!pw) {
+    toast("Enter a master password", "error");
+    return;
+  }
+  if (pw !== confirm) {
+    toast("Passwords do not match", "error");
+    return;
+  }
+  if (pw.length < 10) {
+    toast("Master password must be at least 10 characters", "error");
+    return;
+  }
   try {
-    await api('POST', '/vault/create', { master_password: pw });
-    closeModal('modal-create');
-    toast('Vault created successfully. Please unlock.', 'success');
-  } catch(e) {
-    toast(e.message || 'Failed to create vault', 'error');
+    const result = await api("POST", "/vault/unlock", { password: pw });
+    closeModal("modal-create");
+    if (result.first_run) {
+      document.getElementById("master-pw-input").value = "";
+      showView("view-app");
+      await loadEntries();
+      toast("Vault created and unlocked successfully.", "success");
+    } else {
+      toast("A vault already exists. Please unlock it instead.", "info");
+    }
+  } catch (e) {
+    toast(e.message || "Failed to create vault", "error");
   }
 }
 
 // ─── NAV ────────────────────────────────────────
 function switchPanel(name) {
-  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  event.currentTarget.classList.add('active');
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  document.getElementById('panel-' + name).classList.add('active');
+  document
+    .querySelectorAll(".nav-item")
+    .forEach((el) => el.classList.remove("active"));
+  event.currentTarget.classList.add("active");
+  document
+    .querySelectorAll(".panel")
+    .forEach((p) => p.classList.remove("active"));
+  document.getElementById("panel-" + name).classList.add("active");
 
-  const titles = { vault:'CREDENTIALS', generator:'PASSWORD GENERATOR', breach:'BREACH INTELLIGENCE', export:'EXPORT VAULT', settings:'SETTINGS & SECURITY' };
-  document.getElementById('topbar-title').textContent = titles[name] || name.toUpperCase();
+  const titles = {
+    vault: "CREDENTIALS",
+    generator: "PASSWORD GENERATOR",
+    breach: "BREACH INTELLIGENCE",
+    export: "EXPORT VAULT",
+    settings: "SETTINGS & SECURITY",
+  };
+  document.getElementById("topbar-title").textContent =
+    titles[name] || name.toUpperCase();
 
-  const showSearch = name === 'vault';
-  document.getElementById('search-wrap').style.display = showSearch ? '' : 'none';
-  document.getElementById('btn-add-entry').style.display = name === 'vault' ? '' : 'none';
+  const showSearch = name === "vault";
+  document.getElementById("search-wrap").style.display = showSearch
+    ? ""
+    : "none";
+  document.getElementById("btn-add-entry").style.display =
+    name === "vault" ? "" : "none";
 
-  if (name === 'generator') { generatePassword(); }
+  if (name === "generator") {
+    generatePassword();
+  }
 }
 
 // ─── ENTRIES ────────────────────────────────────
 async function loadEntries() {
   try {
-    const data = await api('GET', '/entries/');
-    allEntries = Array.isArray(data) ? data : (data.entries || []);
+    const data = await api("GET", "/entries");
+    allEntries = Array.isArray(data) ? data : data.entries || [];
     renderEntries(allEntries);
     updateBadge(allEntries.length);
-  } catch(e) {
-    toast('Failed to load entries: ' + e.message, 'error');
+  } catch (e) {
+    toast("Failed to load entries: " + e.message, "error");
   }
 }
 
 function renderEntries(entries) {
-  const list = document.getElementById('entry-list');
-  const empty = document.getElementById('empty-state');
-  const label = document.getElementById('vault-count-label');
+  const list = document.getElementById("entry-list");
+  const empty = document.getElementById("empty-state");
+  const label = document.getElementById("vault-count-label");
 
-  label.textContent = `${entries.length} credential${entries.length !== 1 ? 's' : ''}`;
+  label.textContent = `${entries.length} credential${entries.length !== 1 ? "s" : ""}`;
 
   if (!entries.length) {
-    list.innerHTML = '';
+    list.innerHTML = "";
     list.appendChild(empty);
-    empty.style.display = 'block';
+    empty.style.display = "block";
     return;
   }
-  empty.style.display = 'none';
+  empty.style.display = "none";
 
-  list.innerHTML = entries.map(e => {
-    const siteName = e.site_name || e[0] || 'Unknown';
-    const username = e.username || e[1] || '';
-    const id = e.entry_id || e[2] || '';
-    const initial = siteName.charAt(0).toUpperCase();
-    return `
+  list.innerHTML = entries
+    .map((e) => {
+      const siteName = e.title || e.site_name || e[0] || "Unknown";
+      const username = e.username || e[1] || "";
+      const id = e.id || e.entry_id || e[2] || "";
+      const initial = siteName.charAt(0).toUpperCase();
+      return `
     <div class="entry-card" data-id="${escHtml(id)}" data-site="${escHtml(siteName)}" data-user="${escHtml(username)}">
       <div class="entry-avatar">${escHtml(initial)}</div>
       <div class="entry-info">
@@ -207,84 +260,101 @@ function renderEntries(entries) {
         </button>
       </div>
     </div>`;
-  }).join('');
+    })
+    .join("");
 }
 
 function updateBadge(n) {
-  document.getElementById('entry-count-badge').textContent = n;
+  document.getElementById("entry-count-badge").textContent = n;
 }
 
 function filterEntries() {
-  const q = document.getElementById('search-input').value.toLowerCase();
-  if (!q) { renderEntries(allEntries); return; }
-  renderEntries(allEntries.filter(e => {
-    const site = (e.site_name || e[0] || '').toLowerCase();
-    const user = (e.username || e[1] || '').toLowerCase();
-    return site.includes(q) || user.includes(q);
-  }));
+  const q = document.getElementById("search-input").value.toLowerCase();
+  if (!q) {
+    renderEntries(allEntries);
+    return;
+  }
+  renderEntries(
+    allEntries.filter((e) => {
+      const site = (e.title || e.site_name || e[0] || "").toLowerCase();
+      const user = (e.username || e[1] || "").toLowerCase();
+      return site.includes(q) || user.includes(q);
+    }),
+  );
 }
 
 // ─── ADD ENTRY ───────────────────────────────────
 function openAddModal() {
-  document.getElementById('add-site').value = '';
-  document.getElementById('add-user').value = '';
-  document.getElementById('add-password').value = '';
-  document.getElementById('add-strength-fill').style.width = '0%';
-  document.getElementById('add-strength-label').textContent = '';
-  document.getElementById('add-breach-result').textContent = '';
-  openModal('modal-add');
+  document.getElementById("add-site").value = "";
+  document.getElementById("add-user").value = "";
+  document.getElementById("add-password").value = "";
+  document.getElementById("add-strength-fill").style.width = "0%";
+  document.getElementById("add-strength-label").textContent = "";
+  document.getElementById("add-breach-result").textContent = "";
+  openModal("modal-add");
 }
 
 async function handleAddEntry() {
-  const site = document.getElementById('add-site').value.trim();
-  const user = document.getElementById('add-user').value.trim();
-  const pw = document.getElementById('add-password').value;
-  if (!site || !pw) { toast('Site and password are required', 'error'); return; }
+  const site = document.getElementById("add-site").value.trim();
+  const user = document.getElementById("add-user").value.trim();
+  const pw = document.getElementById("add-password").value;
+  if (!site || !pw) {
+    toast("Site and password are required", "error");
+    return;
+  }
   try {
-    await api('POST', '/entries/', { site_name: site, username: user, password: pw });
-    closeModal('modal-add');
+    await api("POST", "/entries", {
+      title: site,
+      username: user,
+      password: pw,
+    });
+    closeModal("modal-add");
     await loadEntries();
-    toast(`Saved: ${site}`, 'success');
-  } catch(e) {
-    toast('Failed to add entry: ' + e.message, 'error');
+    toast(`Saved: ${site}`, "success");
+  } catch (e) {
+    toast("Failed to add entry: " + e.message, "error");
   }
 }
 
 // ─── REVEAL ENTRY ────────────────────────────────
 async function revealEntry(id, site, user) {
-  document.getElementById('reveal-title').textContent = site;
-  document.getElementById('reveal-site-val').textContent = site;
-  document.getElementById('reveal-user-val').textContent = user;
-  document.getElementById('reveal-pw-val').textContent = '⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤';
-  document.getElementById('reveal-copy-confirm').textContent = '';
-  revealedPw = '';
-  openModal('modal-reveal');
+  document.getElementById("reveal-title").textContent = site;
+  document.getElementById("reveal-site-val").textContent = site;
+  document.getElementById("reveal-user-val").textContent = user;
+  document.getElementById("reveal-pw-val").textContent = "⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤";
+  document.getElementById("reveal-copy-confirm").textContent = "";
+  revealedPw = "";
+  openModal("modal-reveal");
   try {
-    const data = await api('GET', `/entries/${id}`);
+    const data = await api("GET", `/entries/${id}`);
     revealedPw = data.password || data;
-    document.getElementById('reveal-pw-val').textContent = revealedPw;
-  } catch(e) {
-    document.getElementById('reveal-pw-val').textContent = 'Error: ' + e.message;
+    document.getElementById("reveal-pw-val").textContent = revealedPw;
+  } catch (e) {
+    document.getElementById("reveal-pw-val").textContent =
+      "Error: " + e.message;
   }
 }
 
 function copyRevealedPassword() {
   if (!revealedPw) return;
   navigator.clipboard.writeText(revealedPw).then(() => {
-    document.getElementById('reveal-copy-confirm').textContent = '✓ Copied to clipboard';
-    setTimeout(() => { document.getElementById('reveal-copy-confirm').textContent = ''; }, 2000);
+    document.getElementById("reveal-copy-confirm").textContent =
+      "✓ Copied to clipboard";
+    setTimeout(() => {
+      document.getElementById("reveal-copy-confirm").textContent = "";
+    }, 2000);
   });
 }
 
 // ─── DELETE ENTRY ────────────────────────────────
 async function deleteEntry(id) {
-  if (!confirm('Delete this credential? This action cannot be undone.')) return;
+  if (!confirm("Delete this credential? This action cannot be undone.")) return;
   try {
-    await api('DELETE', `/entries/${id}`);
+    await api("DELETE", `/entries/${id}`);
     await loadEntries();
-    toast('Entry securely deleted', 'success');
-  } catch(e) {
-    toast('Failed to delete: ' + e.message, 'error');
+    toast("Entry securely deleted", "success");
+  } catch (e) {
+    toast("Failed to delete: " + e.message, "error");
   }
 }
 
@@ -293,23 +363,26 @@ let scoreDebounce = null;
 async function scorePassword(pw, fillId, labelId, breachId) {
   clearTimeout(scoreDebounce);
   if (!pw) {
-    setStrength(fillId, labelId, 0, '');
-    if (breachId) document.getElementById(breachId).textContent = '';
+    setStrength(fillId, labelId, 0, "");
+    if (breachId) document.getElementById(breachId).textContent = "";
     return;
   }
   scoreDebounce = setTimeout(async () => {
     try {
-      const d = await api('POST', '/ai/score', { password: pw });
+      const d = await api("POST", "/ai/score", { password: pw });
       const score = d.score !== undefined ? d.score : (d.strength_score ?? 0);
-      const label = d.label || (score <= 20 ? 'Weak' : score <= 60 ? 'Moderate' : 'Strong');
+      const label =
+        d.label || (score <= 20 ? "Weak" : score <= 60 ? "Moderate" : "Strong");
       setStrength(fillId, labelId, score, label);
-    } catch(_) {
+    } catch (_) {
       // Fallback: local heuristic
       const score = localScore(pw);
-      const label = score <= 20 ? 'Weak' : score <= 60 ? 'Moderate' : 'Strong';
+      const label = score <= 20 ? "Weak" : score <= 60 ? "Moderate" : "Strong";
       setStrength(fillId, labelId, score, label);
     }
-    if (breachId) { await checkBreachInline(pw, breachId); }
+    if (breachId) {
+      await checkBreachInline(pw, breachId);
+    }
   }, 400);
 }
 
@@ -317,11 +390,11 @@ function setStrength(fillId, labelId, score, label) {
   const fill = document.getElementById(fillId);
   const lbl = document.getElementById(labelId);
   if (!fill || !lbl) return;
-  fill.style.width = score + '%';
-  const color = score <= 20 ? '#c0283d' : score <= 60 ? '#d4a017' : '#2ed573';
+  fill.style.width = score + "%";
+  const color = score <= 20 ? "#c0283d" : score <= 60 ? "#d4a017" : "#2ed573";
   fill.style.background = color;
   lbl.style.color = color;
-  lbl.textContent = label ? `Strength: ${label}` : '';
+  lbl.textContent = label ? `Strength: ${label}` : "";
 }
 
 function localScore(pw) {
@@ -341,145 +414,185 @@ async function checkBreachInline(pw, elId) {
   const el = document.getElementById(elId);
   if (!el) return;
   try {
-    const d = await api('POST', '/breach/check', { password: pw });
+    const d = await api("POST", "/breach/check", { password: pw });
     const breached = d.breached ?? d.is_breached ?? false;
-    el.style.color = breached ? 'var(--crimson-bright)' : '#2ed573';
-    el.textContent = breached ? '⚠ Found in breach database' : '✓ Not found in known breaches';
-  } catch(_) {
-    el.textContent = '';
+    el.style.color = breached ? "var(--crimson-bright)" : "#2ed573";
+    el.textContent = breached
+      ? "⚠ Found in breach database"
+      : "✓ Not found in known breaches";
+  } catch (_) {
+    el.textContent = "";
   }
 }
 
 // ─── BREACH CHECK PANEL ──────────────────────────
 async function checkBreach() {
-  const pw = document.getElementById('breach-input').value;
-  const resultBox = document.getElementById('breach-result');
-  const status = document.getElementById('breach-status');
-  const detail = document.getElementById('breach-detail');
-  if (!pw) { toast('Enter a password to check', 'error'); return; }
-  resultBox.className = 'breach-result-box';
-  status.textContent = 'Checking…';
-  resultBox.classList.add('show');
+  const pw = document.getElementById("breach-input").value;
+  const resultBox = document.getElementById("breach-result");
+  const status = document.getElementById("breach-status");
+  const detail = document.getElementById("breach-detail");
+  if (!pw) {
+    toast("Enter a password to check", "error");
+    return;
+  }
+  resultBox.className = "breach-result-box";
+  status.textContent = "Checking…";
+  resultBox.classList.add("show");
   try {
-    const d = await api('POST', '/breach/check', { password: pw });
+    const d = await api("POST", "/breach/check", { password: pw });
     const breached = d.breached ?? d.is_breached ?? false;
-    resultBox.classList.add(breached ? 'breached' : 'safe');
+    resultBox.classList.add(breached ? "breached" : "safe");
     if (breached) {
-      status.textContent = '⚠ BREACH DETECTED';
-      detail.textContent = 'This password appears in known breach databases. Do not use it. Choose a different password immediately.';
+      status.textContent = "⚠ BREACH DETECTED";
+      detail.textContent =
+        "This password appears in known breach databases. Do not use it. Choose a different password immediately.";
     } else {
-      status.textContent = '✓ NOT FOUND IN BREACHES';
-      detail.textContent = 'This password was not found in the Bloom Filter breach corpus. However, always use unique passwords per service.';
+      status.textContent = "✓ NOT FOUND IN BREACHES";
+      detail.textContent =
+        "This password was not found in the Bloom Filter breach corpus. However, always use unique passwords per service.";
     }
-  } catch(e) {
-    status.textContent = 'Check unavailable';
-    detail.textContent = e.message + ' — Bloom Filter may not be loaded yet.';
-    resultBox.classList.add('safe');
+  } catch (e) {
+    status.textContent = "Check unavailable";
+    detail.textContent = e.message + " — Bloom Filter may not be loaded yet.";
+    resultBox.classList.add("safe");
   }
 }
 
 // ─── GENERATOR ───────────────────────────────────
 function generatePassword() {
-  const length = parseInt(document.getElementById('gen-length').value);
-  const useUpper = document.getElementById('tog-upper').classList.contains('on');
-  const useLower = document.getElementById('tog-lower').classList.contains('on');
-  const useDigits = document.getElementById('tog-digits').classList.contains('on');
-  const useSymbols = document.getElementById('tog-symbols').classList.contains('on');
+  const length = parseInt(document.getElementById("gen-length").value);
+  const useUpper = document
+    .getElementById("tog-upper")
+    .classList.contains("on");
+  const useLower = document
+    .getElementById("tog-lower")
+    .classList.contains("on");
+  const useDigits = document
+    .getElementById("tog-digits")
+    .classList.contains("on");
+  const useSymbols = document
+    .getElementById("tog-symbols")
+    .classList.contains("on");
 
-  let charset = '';
-  if (useUpper) charset += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  if (useLower) charset += 'abcdefghijklmnopqrstuvwxyz';
-  if (useDigits) charset += '0123456789';
-  if (useSymbols) charset += '!@#$%^&*()-_=+[]{}|;:,.<>?';
-  if (!charset) charset = 'abcdefghijklmnopqrstuvwxyz';
+  let charset = "";
+  if (useUpper) charset += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  if (useLower) charset += "abcdefghijklmnopqrstuvwxyz";
+  if (useDigits) charset += "0123456789";
+  if (useSymbols) charset += "!@#$%^&*()-_=+[]{}|;:,.<>?";
+  if (!charset) charset = "abcdefghijklmnopqrstuvwxyz";
 
   const arr = new Uint32Array(length);
   crypto.getRandomValues(arr);
-  const pw = Array.from(arr).map(n => charset[n % charset.length]).join('');
+  const pw = Array.from(arr)
+    .map((n) => charset[n % charset.length])
+    .join("");
   lastGenerated = pw;
-  document.getElementById('gen-output').textContent = pw;
-  scorePassword(pw, 'gen-strength-fill', 'gen-strength-label', null);
+  document.getElementById("gen-output").textContent = pw;
+  scorePassword(pw, "gen-strength-fill", "gen-strength-label", null);
 }
 
 function copyGenerated() {
   if (!lastGenerated) return;
-  navigator.clipboard.writeText(lastGenerated).then(() => toast('Password copied', 'success'));
+  navigator.clipboard
+    .writeText(lastGenerated)
+    .then(() => toast("Password copied", "success"));
 }
 
 function fillGenerated(inputId) {
   if (!lastGenerated) generatePassword();
   document.getElementById(inputId).value = lastGenerated;
-  document.getElementById(inputId).dispatchEvent(new Event('input'));
+  document.getElementById(inputId).dispatchEvent(new Event("input"));
 }
 
-function toggleOpt(el) { el.classList.toggle('on'); generatePassword(); }
+function toggleOpt(el) {
+  el.classList.toggle("on");
+  generatePassword();
+}
 
 function togglePwVis(inputId, btn) {
   const input = document.getElementById(inputId);
-  input.type = input.type === 'password' ? 'text' : 'password';
+  input.type = input.type === "password" ? "text" : "password";
 }
 
 // ─── EXPORT ─────────────────────────────────────
 async function handleExport() {
-  const format = document.getElementById('export-format').value;
-  const exportPw = document.getElementById('export-password').value;
+  const format = document.getElementById("export-format").value;
+  const exportPw = document.getElementById("export-password").value;
   try {
     const body = { format };
     if (exportPw) body.export_password = exportPw;
-    const d = await api('POST', '/export/', body);
-    toast('Export initiated: ' + (d.path || d.message || 'Done'), 'success');
-  } catch(e) {
-    toast('Export failed: ' + e.message, 'error');
+    const d = await api("POST", "/export/", body);
+    toast("Export initiated: " + (d.path || d.message || "Done"), "success");
+  } catch (e) {
+    toast("Export failed: " + e.message, "error");
   }
 }
 
 // ─── BACKUP ──────────────────────────────────────
 async function handleBackup() {
   try {
-    const d = await api('POST', '/vault/backup');
-    toast('Backup created: ' + (d.path || 'Done'), 'success');
-  } catch(e) {
-    toast('Backup failed: ' + e.message, 'error');
+    const d = await api("POST", "/vault/backup");
+    toast("Backup created: " + (d.path || "Done"), "success");
+  } catch (e) {
+    toast("Backup failed: " + e.message, "error");
   }
 }
 
 // ─── MODALS ─────────────────────────────────────
-function openModal(id) { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function openModal(id) {
+  document.getElementById(id).classList.add("open");
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove("open");
+}
 
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', function(e) {
-    if (e.target === this) this.classList.remove('open');
+document.querySelectorAll(".modal-overlay").forEach((overlay) => {
+  overlay.addEventListener("click", function (e) {
+    if (e.target === this) this.classList.remove("open");
   });
 });
 
 // ─── TOAST ──────────────────────────────────────
-function toast(msg, type = 'info') {
-  const container = document.getElementById('toast-container');
-  const el = document.createElement('div');
+function toast(msg, type = "info") {
+  const container = document.getElementById("toast-container");
+  const el = document.createElement("div");
   el.className = `toast ${type}`;
-  const icon = type === 'success' ? '✓' : type === 'error' ? '⚠' : '◈';
-  el.innerHTML = `<span style="color:${type==='success'?'#2ed573':type==='error'?'var(--crimson-bright)':'var(--gold)'}">${icon}</span> ${escHtml(msg)}`;
+  const icon = type === "success" ? "✓" : type === "error" ? "⚠" : "◈";
+  el.innerHTML = `<span style="color:${type === "success" ? "#2ed573" : type === "error" ? "var(--crimson-bright)" : "var(--gold)"}">${icon}</span> ${escHtml(msg)}`;
   container.appendChild(el);
-  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 0.3s'; setTimeout(() => el.remove(), 300); }, 3500);
+  setTimeout(() => {
+    el.style.opacity = "0";
+    el.style.transition = "opacity 0.3s";
+    setTimeout(() => el.remove(), 300);
+  }, 3500);
 }
 
 // ─── UTILS ──────────────────────────────────────
 function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 // ─── INIT ────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener("DOMContentLoaded", () => {
   // Check if backend is up and vault already unlocked
-  api('GET', '/vault/status').then(() => {
-    api('GET', '/entries/').then(async (d) => {
-      allEntries = Array.isArray(d) ? d : (d.entries || []);
-      renderEntries(allEntries);
-      updateBadge(allEntries.length);
-      showView('view-app');
-    }).catch(() => {/* vault locked, stay on lock screen */});
-  }).catch(() => {
-    // Backend not ready — show lock screen anyway
-  });
+  api("GET", "/vault/status")
+    .then(() => {
+      api("GET", "/entries")
+        .then(async (d) => {
+          allEntries = Array.isArray(d) ? d : d.entries || [];
+          renderEntries(allEntries);
+          updateBadge(allEntries.length);
+          showView("view-app");
+        })
+        .catch(() => {
+          /* vault locked, stay on lock screen */
+        });
+    })
+    .catch(() => {
+      // Backend not ready — show lock screen anyway
+    });
 });
