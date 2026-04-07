@@ -11,6 +11,33 @@ const ROUTE_ALIASES = {
   "/vault/backup": [],
 };
 
+function getEl(id) {
+  return document.getElementById(id);
+}
+
+function setText(id, value) {
+  const el = getEl(id);
+  if (el) el.textContent = value;
+}
+
+function setDisplay(id, value) {
+  const el = getEl(id);
+  if (el) el.style.display = value;
+}
+
+async function refreshVault({ clearSearch = false } = {}) {
+  const data = await api("GET", "/entries");
+  allEntries = Array.isArray(data) ? data : data.entries || [];
+
+  if (clearSearch) {
+    const search = getEl("search-input");
+    if (search) search.value = "";
+  }
+
+  renderEntries(allEntries);
+  updateBadge(allEntries.length);
+}
+
 function normalizePath(path) {
   return path.replace(/\/{2,}/g, "/");
 }
@@ -92,26 +119,30 @@ function showView(id) {
 
 // ─── LOCK / UNLOCK ──────────────────────────────
 async function handleUnlock() {
-  const pw = document.getElementById("master-pw-input").value;
-  const errEl = document.getElementById("lock-error");
-  const btn = document.getElementById("btn-unlock");
-  errEl.textContent = "";
+  const pw = getEl("master-pw-input").value;
+  const errEl = getEl("lock-error");
+  const btn = getEl("btn-unlock");
+
+  if (errEl) errEl.textContent = "";
   if (!pw) {
-    errEl.textContent = "⚠ Please enter your master password.";
+    if (errEl) errEl.textContent = "⚠ Please enter your master password.";
     return;
   }
 
   btn.disabled = true;
   btn.textContent = "Unlocking…";
+
   try {
     await api("POST", "/vault/unlock", { password: pw });
-    document.getElementById("master-pw-input").value = "";
+    getEl("master-pw-input").value = "";
     showView("view-app");
-    await loadEntries();
+    switchPanel("vault");
+    await refreshVault({ clearSearch: true });
     toast("Vault unlocked successfully", "success");
   } catch (e) {
-    errEl.textContent =
-      "⚠ " + (e.message || "Incorrect password or vault error.");
+    if (errEl)
+      errEl.textContent =
+        "⚠ " + (e.message || "Incorrect password or vault error.");
   } finally {
     btn.disabled = false;
     btn.textContent = "Unlock Vault";
@@ -126,19 +157,24 @@ async function handleLock() {
   try {
     await api("POST", "/vault/lock");
   } catch (_) {
-    /* ignore */
+    // ignore
   }
+
   showView("view-lock");
   allEntries = [];
-  // Reset the entry list safely — never use innerHTML='' because it destroys
-  // the #empty-state element if it was appended inside the list.
-  const list = document.getElementById("entry-list");
-  const empty = document.getElementById("empty-state");
-  Array.from(list.children).forEach((child) => {
-    if (child !== empty) list.removeChild(child);
-  });
-  empty.style.display = "block";
-  if (!list.contains(empty)) list.appendChild(empty);
+  renderEntries([]);
+  updateBadge(0);
+
+  const list = getEl("entry-list");
+  const empty = getEl("empty-state");
+  if (list && empty) {
+    Array.from(list.children).forEach((child) => {
+      if (child !== empty) list.removeChild(child);
+    });
+    empty.style.display = "block";
+    if (!list.contains(empty)) list.appendChild(empty);
+  }
+
   toast("Vault locked. Key wiped from memory.", "info");
 }
 
@@ -183,11 +219,13 @@ function switchPanel(name) {
   document
     .querySelectorAll(".nav-item")
     .forEach((el) => el.classList.remove("active"));
-  event.currentTarget.classList.add("active");
+  if (event && event.currentTarget) event.currentTarget.classList.add("active");
+
   document
     .querySelectorAll(".panel")
     .forEach((p) => p.classList.remove("active"));
-  document.getElementById("panel-" + name).classList.add("active");
+  const panel = getEl("panel-" + name);
+  if (panel) panel.classList.add("active");
 
   const titles = {
     vault: "CREDENTIALS",
@@ -196,15 +234,13 @@ function switchPanel(name) {
     export: "EXPORT VAULT",
     settings: "SETTINGS & SECURITY",
   };
-  document.getElementById("topbar-title").textContent =
-    titles[name] || name.toUpperCase();
+
+  const topbarTitle = getEl("topbar-title");
+  if (topbarTitle) topbarTitle.textContent = titles[name] || name.toUpperCase();
 
   const showSearch = name === "vault";
-  document.getElementById("search-wrap").style.display = showSearch
-    ? ""
-    : "none";
-  document.getElementById("btn-add-entry").style.display =
-    name === "vault" ? "" : "none";
+  setDisplay("search-wrap", showSearch ? "" : "none");
+  setDisplay("btn-add-entry", name === "vault" ? "" : "none");
 
   if (name === "generator") {
     generatePassword();
@@ -214,21 +250,22 @@ function switchPanel(name) {
 // ─── ENTRIES ────────────────────────────────────
 async function loadEntries() {
   try {
-    const data = await api("GET", "/entries");
-    allEntries = Array.isArray(data) ? data : data.entries || [];
-    renderEntries(allEntries);
-    updateBadge(allEntries.length);
+    await refreshVault({ clearSearch: false });
   } catch (e) {
     toast("Failed to load entries: " + e.message, "error");
   }
 }
 
 function renderEntries(entries) {
-  const list = document.getElementById("entry-list");
-  const empty = document.getElementById("empty-state");
-  const label = document.getElementById("vault-count-label");
+  const list = getEl("entry-list");
+  const empty = getEl("empty-state");
+  const label = getEl("vault-count-label");
+  const badge = getEl("entry-count-badge");
+
+  if (!list || !empty || !label) return;
 
   label.textContent = `${entries.length} credential${entries.length !== 1 ? "s" : ""}`;
+  if (badge) badge.textContent = String(entries.length);
 
   if (!entries.length) {
     list.innerHTML = "";
@@ -237,9 +274,8 @@ function renderEntries(entries) {
     return;
   }
 
-  // Remove empty-state before overwriting innerHTML so it isn't destroyed
-  if (list.contains(empty)) list.removeChild(empty);
   empty.style.display = "none";
+  if (list.contains(empty)) list.removeChild(empty);
 
   list.innerHTML = entries
     .map((e) => {
@@ -247,32 +283,35 @@ function renderEntries(entries) {
       const username = e.username || e[1] || "";
       const id = e.id || e.entry_id || e[2] || "";
       const initial = siteName.charAt(0).toUpperCase();
+
       return `
-    <div class="entry-card" data-id="${escHtml(id)}" data-site="${escHtml(siteName)}" data-user="${escHtml(username)}">
-      <div class="entry-avatar">${escHtml(initial)}</div>
-      <div class="entry-info">
-        <div class="entry-site">${escHtml(siteName)}</div>
-        <div class="entry-user">${escHtml(username)}</div>
+      <div class="entry-card" data-id="${escHtml(id)}" data-site="${escHtml(siteName)}" data-user="${escHtml(username)}">
+        <div class="entry-avatar">${escHtml(initial)}</div>
+        <div class="entry-info">
+          <div class="entry-site">${escHtml(siteName)}</div>
+          <div class="entry-user">${escHtml(username)}</div>
+        </div>
+        <div class="entry-actions">
+          <button class="icon-btn" title="View / Copy" onclick="revealEntry('${escHtml(id)}','${escHtml(siteName)}','${escHtml(username)}');event.stopPropagation()">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+              <path d="M1 8S3.5 3 8 3s7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>
+            </svg>
+          </button>
+          <button class="icon-btn danger" title="Delete" onclick="deleteEntry('${escHtml(id)}');event.stopPropagation()">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+              <path d="M3 5h10M8 8v4M5 5l1-2h4l1 2M4 5l1 9h6l1-9"/>
+            </svg>
+          </button>
+        </div>
       </div>
-      <div class="entry-actions">
-        <button class="icon-btn" title="View / Copy" onclick="revealEntry('${escHtml(id)}','${escHtml(siteName)}','${escHtml(username)}');event.stopPropagation()">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
-            <path d="M1 8S3.5 3 8 3s7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>
-          </svg>
-        </button>
-        <button class="icon-btn danger" title="Delete" onclick="deleteEntry('${escHtml(id)}');event.stopPropagation()">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
-            <path d="M3 5h10M8 8v4M5 5l1-2h4l1 2M4 5l1 9h6l1-9"/>
-          </svg>
-        </button>
-      </div>
-    </div>`;
+    `;
     })
     .join("");
 }
 
 function updateBadge(n) {
-  document.getElementById("entry-count-badge").textContent = n;
+  const badge = getEl("entry-count-badge");
+  if (badge) badge.textContent = String(n);
 }
 
 function filterEntries() {
@@ -302,21 +341,24 @@ function openAddModal() {
 }
 
 async function handleAddEntry() {
-  const site = document.getElementById("add-site").value.trim();
-  const user = document.getElementById("add-user").value.trim();
-  const pw = document.getElementById("add-password").value;
+  const site = getEl("add-site").value.trim();
+  const user = getEl("add-user").value.trim();
+  const pw = getEl("add-password").value;
+
   if (!site || !pw) {
     toast("Site and password are required", "error");
     return;
   }
+
   try {
     await api("POST", "/entries", {
       title: site,
       username: user,
       password: pw,
     });
+
     closeModal("modal-add");
-    await loadEntries();
+    await refreshVault({ clearSearch: true });
     toast(`Saved: ${site}`, "success");
   } catch (e) {
     toast("Failed to add entry: " + e.message, "error");
@@ -325,20 +367,27 @@ async function handleAddEntry() {
 
 // ─── REVEAL ENTRY ────────────────────────────────
 async function revealEntry(id, site, user) {
-  document.getElementById("reveal-title").textContent = site;
-  document.getElementById("reveal-site-val").textContent = site;
-  document.getElementById("reveal-user-val").textContent = user;
-  document.getElementById("reveal-pw-val").textContent = "⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤";
-  document.getElementById("reveal-copy-confirm").textContent = "";
+  const title = getEl("reveal-title");
+  const siteVal = getEl("reveal-site-val");
+  const userVal = getEl("reveal-user-val");
+  const pwVal = getEl("reveal-pw-val");
+  const copy = getEl("reveal-copy-confirm");
+
+  if (title) title.textContent = site;
+  if (siteVal) siteVal.textContent = site;
+  if (userVal) userVal.textContent = user;
+  if (pwVal) pwVal.textContent = "⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤⬤";
+  if (copy) copy.textContent = "";
+
   revealedPw = "";
   openModal("modal-reveal");
+
   try {
     const data = await api("GET", `/entries/${id}`);
     revealedPw = data.password || data;
-    document.getElementById("reveal-pw-val").textContent = revealedPw;
+    if (pwVal) pwVal.textContent = revealedPw;
   } catch (e) {
-    document.getElementById("reveal-pw-val").textContent =
-      "Error: " + e.message;
+    if (pwVal) pwVal.textContent = "Error: " + e.message;
   }
 }
 
@@ -356,9 +405,10 @@ function copyRevealedPassword() {
 // ─── DELETE ENTRY ────────────────────────────────
 async function deleteEntry(id) {
   if (!confirm("Delete this credential? This action cannot be undone.")) return;
+
   try {
     await api("DELETE", `/entries/${id}`);
-    await loadEntries();
+    await refreshVault({ clearSearch: true });
     toast("Entry securely deleted", "success");
   } catch (e) {
     toast("Failed to delete: " + e.message, "error");
