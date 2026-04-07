@@ -8,10 +8,6 @@ let revealedPw = "";
 
 const ROUTE_ALIASES = {
   "/": ["/vault/status"],
-  "/ai/score": ["/ai/score-password"],
-  "/ai/score-password": ["/ai/score"],
-  "/export/": ["/export/quantum-safe"],
-  "/export/quantum-safe": ["/export/"],
   "/vault/backup": [],
 };
 
@@ -134,7 +130,15 @@ async function handleLock() {
   }
   showView("view-lock");
   allEntries = [];
-  document.getElementById("entry-list").innerHTML = "";
+  // Reset the entry list safely — never use innerHTML='' because it destroys
+  // the #empty-state element if it was appended inside the list.
+  const list = document.getElementById("entry-list");
+  const empty = document.getElementById("empty-state");
+  Array.from(list.children).forEach((child) => {
+    if (child !== empty) list.removeChild(child);
+  });
+  empty.style.display = "block";
+  if (!list.contains(empty)) list.appendChild(empty);
   toast("Vault locked. Key wiped from memory.", "info");
 }
 
@@ -228,10 +232,13 @@ function renderEntries(entries) {
 
   if (!entries.length) {
     list.innerHTML = "";
-    list.appendChild(empty);
     empty.style.display = "block";
+    if (!list.contains(empty)) list.appendChild(empty);
     return;
   }
+
+  // Remove empty-state before overwriting innerHTML so it isn't destroyed
+  if (list.contains(empty)) list.removeChild(empty);
   empty.style.display = "none";
 
   list.innerHTML = entries
@@ -369,7 +376,7 @@ async function scorePassword(pw, fillId, labelId, breachId) {
   }
   scoreDebounce = setTimeout(async () => {
     try {
-      const d = await api("POST", "/ai/score", { password: pw });
+      const d = await api("POST", "/ai/score-password", { password: pw });
       const score = d.score !== undefined ? d.score : (d.strength_score ?? 0);
       const label =
         d.label || (score <= 20 ? "Weak" : score <= 60 ? "Moderate" : "Strong");
@@ -521,7 +528,7 @@ async function handleExport() {
   try {
     const body = { format };
     if (exportPw) body.export_password = exportPw;
-    const d = await api("POST", "/export/", body);
+    const d = await api("POST", "/export/quantum-safe", body);
     toast("Export initiated: " + (d.path || d.message || "Done"), "success");
   } catch (e) {
     toast("Export failed: " + e.message, "error");
