@@ -173,25 +173,15 @@ document.getElementById("master-pw-input").addEventListener("keydown", (e) => {
 async function handleLock() {
   try {
     await api("POST", "/vault/lock");
-  } catch (_) {
-    // ignore
+  } catch (e) {
+    console.error("handleLock failed", e);
+    toast("Lock failed: " + (e.message || e), "error");
   }
 
   showView("view-lock");
   allEntries = [];
   renderEntries([]);
   updateBadge(0);
-
-  const list = getEl("entry-list");
-  const empty = getEl("empty-state");
-  if (list && empty) {
-    Array.from(list.children).forEach((child) => {
-      if (child !== empty) list.removeChild(child);
-    });
-    empty.style.display = "block";
-    if (!list.contains(empty)) list.appendChild(empty);
-  }
-
   toast("Vault locked. Key wiped from memory.", "info");
 }
 
@@ -273,6 +263,22 @@ async function loadEntries() {
   }
 }
 
+function ensureEntryItemsContainer(list, empty) {
+  let items = document.getElementById("entry-items");
+
+  if (!items) {
+    items = document.createElement("div");
+    items.id = "entry-items";
+    items.className = "entry-items";
+    items.style.display = "flex";
+    items.style.flexDirection = "column";
+    items.style.gap = "2px";
+    list.insertBefore(items, empty);
+  }
+
+  return items;
+}
+
 function renderEntries(entries) {
   const list = getEl("entry-list");
   const empty = getEl("empty-state");
@@ -290,20 +296,20 @@ function renderEntries(entries) {
     return;
   }
 
+  const items = ensureEntryItemsContainer(list, empty);
+
   label.textContent = `${entries.length} credential${entries.length !== 1 ? "s" : ""}`;
   if (badge) badge.textContent = String(entries.length);
 
   if (!entries.length) {
-    list.innerHTML = "";
+    items.innerHTML = "";
     empty.style.display = "block";
-    if (!list.contains(empty)) list.appendChild(empty);
     return;
   }
 
   empty.style.display = "none";
-  if (list.contains(empty)) list.removeChild(empty);
 
-  list.innerHTML = entries
+  items.innerHTML = entries
     .map((e) => {
       const siteName = e.title || e.site_name || e[0] || "Unknown";
       const username = e.username || e[1] || "";
@@ -311,26 +317,26 @@ function renderEntries(entries) {
       const initial = siteName.charAt(0).toUpperCase();
 
       return `
-      <div class="entry-card" data-id="${escHtml(id)}" data-site="${escHtml(siteName)}" data-user="${escHtml(username)}">
-        <div class="entry-avatar">${escHtml(initial)}</div>
-        <div class="entry-info">
-          <div class="entry-site">${escHtml(siteName)}</div>
-          <div class="entry-user">${escHtml(username)}</div>
+        <div class="entry-card" data-id="${escHtml(id)}" data-site="${escHtml(siteName)}" data-user="${escHtml(username)}">
+          <div class="entry-avatar">${escHtml(initial)}</div>
+          <div class="entry-info">
+            <div class="entry-site">${escHtml(siteName)}</div>
+            <div class="entry-user">${escHtml(username)}</div>
+          </div>
+          <div class="entry-actions">
+            <button class="icon-btn" title="View / Copy" onclick="revealEntry('${escHtml(id)}','${escHtml(siteName)}','${escHtml(username)}');event.stopPropagation()">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+                <path d="M1 8S3.5 3 8 3s7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>
+              </svg>
+            </button>
+            <button class="icon-btn danger" title="Delete" onclick="deleteEntry('${escHtml(id)}');event.stopPropagation()">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+                <path d="M3 5h10M8 8v4M5 5l1-2h4l1 2M4 5l1 9h6l1-9"/>
+              </svg>
+            </button>
+          </div>
         </div>
-        <div class="entry-actions">
-          <button class="icon-btn" title="View / Copy" onclick="revealEntry('${escHtml(id)}','${escHtml(siteName)}','${escHtml(username)}');event.stopPropagation()">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
-              <path d="M1 8S3.5 3 8 3s7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>
-            </svg>
-          </button>
-          <button class="icon-btn danger" title="Delete" onclick="deleteEntry('${escHtml(id)}');event.stopPropagation()">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
-              <path d="M3 5h10M8 8v4M5 5l1-2h4l1 2M4 5l1 9h6l1-9"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-    `;
+      `;
     })
     .join("");
 }
@@ -612,13 +618,62 @@ async function handleExport() {
   }
 }
 
+async function handleImport() {
+  const input = getEl("import-file");
+  const btn = getEl("btn-import");
+  const file = input?.files?.[0];
+
+  if (!file) {
+    toast("Select an export file first", "error");
+    return;
+  }
+
+  const prevLabel = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Importing…";
+  }
+
+  try {
+    const content = await file.text();
+    const result = await api("POST", "/import/quantum-safe", {
+      content,
+      filename: file.name,
+      clear_existing: false,
+    });
+
+    input.value = "";
+    await refreshVault({ clearSearch: true });
+    toast(
+      `Imported ${result.imported || 0} entr${result.imported === 1 ? "y" : "ies"} from ${file.name}`,
+      "success",
+    );
+
+    if ((result.skipped || 0) > 0) {
+      toast(
+        `Skipped ${result.skipped} invalid entr${result.skipped === 1 ? "y" : "ies"}`,
+        "info",
+      );
+    }
+  } catch (e) {
+    console.error("handleImport failed", e);
+    toast("Import failed: " + (e.message || e), "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = prevLabel || "Import Vault";
+    }
+  }
+}
+
 // ─── BACKUP ──────────────────────────────────────
 async function handleBackup() {
   try {
     const d = await api("POST", "/vault/backup");
     toast("Backup created: " + (d.path || "Done"), "success");
   } catch (e) {
-    toast("Backup failed: " + e.message, "error");
+    console.error("handleBackup failed", e);
+    toast("Backup failed: " + (e.message || e), "error");
   }
 }
 

@@ -287,6 +287,26 @@
 </div>
 </div>
 <div class="settings-section">
+<div class="settings-section-title">Import Backup</div>
+<div style="background:var(--bg-card);border:1px solid var(--border-dim);padding:24px">
+<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);line-height:1.8;margin-bottom:16px">
+            Import a previously exported CogniVault backup. Only import files you trust.
+          </div>
+<div class="form-group">
+<label class="form-label">Backup File</label>
+<input class="form-input" id="import-file" accept=".enc,.json,application/json,text/plain" type="file"/>
+</div>
+<div class="flex gap-2" style="justify-content:flex-end">
+<button class="btn-primary" id="btn-import" onclick="handleImport()">
+<svg fill="none" height="11" stroke="currentColor" stroke-width="2" viewbox="0 0 16 16" width="11">
+<path d="M4 12h8M8 3v7M5 7l3 3 3-3"></path>
+</svg>
+                Import Vault
+              </button>
+</div>
+</div>
+</div>
+<div class="settings-section">
 <div class="settings-section-title">Post-Quantum Security</div>
 <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-second);line-height:1.9;margin-bottom:16px">
             Encrypted exports use ML-KEM (CRYSTALS-Kyber768, NIST FIPS 203) for key encapsulation.
