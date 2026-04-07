@@ -11,6 +11,19 @@ const ROUTE_ALIASES = {
   "/vault/backup": [],
 };
 
+window.addEventListener("error", (e) => {
+  console.error("window.error", e.error || e.message);
+  toast("JS error: " + (e.error?.message || e.message || "unknown"), "error");
+});
+
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("unhandledrejection", e.reason);
+  toast(
+    "Promise error: " + (e.reason?.message || e.reason || "unknown"),
+    "error",
+  );
+});
+
 function getEl(id) {
   return document.getElementById(id);
 }
@@ -26,18 +39,23 @@ function setDisplay(id, value) {
 }
 
 async function refreshVault({ clearSearch = false } = {}) {
-  const data = await api("GET", "/entries");
-  allEntries = Array.isArray(data) ? data : data.entries || [];
+  try {
+    const data = await api("GET", "/entries");
+    allEntries = Array.isArray(data) ? data : data.entries || [];
 
-  if (clearSearch) {
-    const search = getEl("search-input");
-    if (search) search.value = "";
+    if (clearSearch) {
+      const search = getEl("search-input");
+      if (search) search.value = "";
+    }
+
+    renderEntries(allEntries);
+    updateBadge(allEntries.length);
+  } catch (e) {
+    console.error("refreshVault failed", e);
+    toast("Refresh failed: " + (e.message || e), "error");
+    throw e;
   }
-
-  renderEntries(allEntries);
-  updateBadge(allEntries.length);
 }
-
 function normalizePath(path) {
   return path.replace(/\/{2,}/g, "/");
 }
@@ -140,9 +158,8 @@ async function handleUnlock() {
     await refreshVault({ clearSearch: true });
     toast("Vault unlocked successfully", "success");
   } catch (e) {
-    if (errEl)
-      errEl.textContent =
-        "⚠ " + (e.message || "Incorrect password or vault error.");
+    console.error("handleUnlock failed", e);
+    toast("Unlock failed: " + (e.message || e), "error");
   } finally {
     btn.disabled = false;
     btn.textContent = "Unlock Vault";
@@ -215,11 +232,11 @@ async function handleCreateVault() {
 }
 
 // ─── NAV ────────────────────────────────────────
-function switchPanel(name) {
+function switchPanel(name, evt = null) {
   document
     .querySelectorAll(".nav-item")
     .forEach((el) => el.classList.remove("active"));
-  if (event && event.currentTarget) event.currentTarget.classList.add("active");
+  if (evt?.currentTarget) evt.currentTarget.classList.add("active");
 
   document
     .querySelectorAll(".panel")
@@ -262,7 +279,16 @@ function renderEntries(entries) {
   const label = getEl("vault-count-label");
   const badge = getEl("entry-count-badge");
 
-  if (!list || !empty || !label) return;
+  if (!list || !empty || !label) {
+    console.error("renderEntries missing elements", {
+      list,
+      empty,
+      label,
+      badge,
+    });
+    toast("Vault UI is missing required elements. Check HTML ids.", "error");
+    return;
+  }
 
   label.textContent = `${entries.length} credential${entries.length !== 1 ? "s" : ""}`;
   if (badge) badge.textContent = String(entries.length);
@@ -356,12 +382,12 @@ async function handleAddEntry() {
       username: user,
       password: pw,
     });
-
     closeModal("modal-add");
     await refreshVault({ clearSearch: true });
     toast(`Saved: ${site}`, "success");
   } catch (e) {
-    toast("Failed to add entry: " + e.message, "error");
+    console.error("handleAddEntry failed", e);
+    toast("Failed to add entry: " + (e.message || e), "error");
   }
 }
 
@@ -411,7 +437,8 @@ async function deleteEntry(id) {
     await refreshVault({ clearSearch: true });
     toast("Entry securely deleted", "success");
   } catch (e) {
-    toast("Failed to delete: " + e.message, "error");
+    console.error("deleteEntry failed", e);
+    toast("Failed to delete: " + (e.message || e), "error");
   }
 }
 
@@ -611,12 +638,20 @@ document.querySelectorAll(".modal-overlay").forEach((overlay) => {
 
 // ─── TOAST ──────────────────────────────────────
 function toast(msg, type = "info") {
-  const container = document.getElementById("toast-container");
+  console.error(`[${type}]`, msg);
+
+  const container = getEl("toast-container");
+  if (!container) {
+    alert(`${type.toUpperCase()}: ${msg}`);
+    return;
+  }
+
   const el = document.createElement("div");
   el.className = `toast ${type}`;
   const icon = type === "success" ? "✓" : type === "error" ? "⚠" : "◈";
   el.innerHTML = `<span style="color:${type === "success" ? "#2ed573" : type === "error" ? "var(--crimson-bright)" : "var(--gold)"}">${icon}</span> ${escHtml(msg)}`;
   container.appendChild(el);
+
   setTimeout(() => {
     el.style.opacity = "0";
     el.style.transition = "opacity 0.3s";
